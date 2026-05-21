@@ -1,0 +1,91 @@
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import math
+from scipy.stats import norm
+
+ticker = "AAPL"
+start_date = "2023-01-01"
+end_date = "2025-01-01"
+
+data = yf.download(ticker, start=start_date, end=end_date)
+if data.empty:
+    raise ValueError("No data found. Check ticker or date range.")
+
+prices = data['Close']
+if isinstance(prices, pd.DataFrame):
+    prices = prices.iloc[:, 0]
+
+S0 = prices.iloc[-1]
+print(f"Last stock price (S0): {S0:.2f}")
+
+returns = prices.pct_change().dropna()
+sigma = returns.std() * np.sqrt(252)
+mu = returns.mean() * 252
+r = 0.03
+print(f"Estimated annual volatility: {sigma:.4f}")
+print(f"Estimated annual drift: {mu:.4f}")
+
+def monte_carlo_paths(S0, T, r, sigma, steps=252, trials=100000, antithetic=True, seed=42):
+
+    np.random.seed(seed)
+    dt = T / steps
+    N = trials // 2 if antithetic else trials
+
+    Z = np.random.standard_normal((steps, N))
+    if antithetic:
+        Z = np.concatenate((Z, -Z), axis=1)
+
+    S = np.zeros((steps + 1, trials))
+    S[0] = S0
+
+    for t in range(1, steps + 1):
+        S[t] = S[t - 1] * np.exp((r - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * Z[t - 1])
+
+    return S
+
+K = 150
+T = 1
+trials = 100000
+steps = 252
+
+paths = monte_carlo_paths(S0, T, r, sigma, steps, trials, antithetic=True)
+final_prices = paths[-1]
+
+payoffs = np.maximum(final_prices - K, 0)
+call_price_mc = np.exp(-r * T) * np.mean(payoffs)
+print(f"Monte Carlo European call option price: {call_price_mc:.2f}")
+
+
+def black_scholes_call(S0, K, T, r, sigma):
+    d1 = (np.log(S0 / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+    return S0 * norm.cdf(d1) - K * np.exp(-r * T) * norm.cdf(d2)
+
+bs_price = black_scholes_call(S0, K, T, r, sigma)
+print(f"Black-Scholes European call price: {bs_price:.2f}")
+
+plt.figure(figsize=(12,6))
+for i in range(min(500, trials)):  # plot max 500 paths for clarity
+    plt.plot(paths[:, i], color='blue', alpha=0.05)
+
+plt.axhline(K, color='red', linestyle='--', label='Strike Price (K)')
+plt.title(f"Monte Carlo Simulation of {ticker} Stock Price Paths")
+plt.xlabel("Days")
+plt.ylabel("Stock Price ($)")
+plt.legend()
+plt.grid(True)
+plt.savefig("monte_carlo_paths.png")
+plt.show()
+
+plt.figure(figsize=(10,5))
+plt.hist(final_prices, bins=100, color='blue', alpha=0.7, edgecolor='black')
+plt.axvline(K, color='red', linestyle='--', label='Strike Price (K)')
+plt.title(f"Histogram of Simulated {ticker} Final Prices at T={T} year")
+plt.xlabel("Stock Price ($)")
+plt.ylabel("Frequency")
+plt.legend()
+plt.grid(True)
+plt.savefig("monte_carlo_histogram.png")
+plt.show()
